@@ -1,21 +1,21 @@
 # Micro-Prolog: Unification and Backward-Chaining Inference
 
-This project implements a small Prolog interpreter in Python based on the logic-programming concepts presented in **Chapter 9 of *Artificial Intelligence: A Modern Approach*** by Stuart Russell and Peter Norvig. The implementation focuses on the core mechanisms underlying first-order logic inference: term representation, substitution, unification, standardization apart, and backward chaining with depth-first backtracking.
+This project implements a small Prolog interpreter in Python grounded in the logic-programming concepts of Chapter 9 of *Artificial Intelligence: A Modern Approach* (Russell & Norvig, 2010). The implementation covers the core mechanisms underlying first-order logic inference: term representation, substitution, unification with occurs check, standardisation apart, and backward chaining with depth-first backtracking. The objective is a transparent realisation of these mechanisms rather than a complete Prolog system; the interpreter supports Prolog-style facts and Horn clauses, a knowledge-base query interface, and an interactive REPL.
 
-The objective is to provide a transparent implementation of these mechanisms rather than a complete Prolog system. The interpreter supports Prolog-style facts and Horn clauses, an interactive REPL, and knowledge-base queries with variable bindings.
+Logic programming rests on Robert Kowalski's equation, *Algorithm = Logic + Control*: knowledge is expressed declaratively as logical sentences, and computation proceeds by running an inference procedure over that knowledge. Prolog is the most widely used realisation of this paradigm, employed in rapid prototyping, compiler construction, and natural language parsing (Russell & Norvig, 2010). This project exposes the inference machinery underlying Prolog at the implementation level.
 
 ---
 
 ## Project Architecture
 
-| Module      | Responsibility                                                       |
-| :---------- | :------------------------------------------------------------------- |
-| `ast.py`    | Representation of variables, atoms, compound terms, and Horn clauses |
-| `unify.py`  | Substitution, occurs check, and unification                          |
-| `kb.py`     | Knowledge-base storage and standardization apart                     |
-| `solver.py` | Backward-chaining inference and depth-first backtracking             |
-| `parser.py` | Tokenization and parsing of Prolog-style syntax                      |
-| `main.py`   | Knowledge-base loading and interactive REPL                          |
+| Module | Responsibility |
+| :--- | :--- |
+| `ast.py` | Representation of variables, atoms, compound terms, and Horn clauses |
+| `unify.py` | Substitution application, occurs check, and unification |
+| `kb.py` | Knowledge-base storage and standardisation apart |
+| `solver.py` | Backward-chaining inference and depth-first backtracking |
+| `parser.py` | Tokenisation and parsing of Prolog-style syntax |
+| `main.py` | Knowledge-base loading and interactive REPL |
 
 ---
 
@@ -23,415 +23,100 @@ The objective is to provide a transparent implementation of these mechanisms rat
 
 ### First-Order Logic and Horn Clauses
 
-The interpreter operates on a restricted fragment of **first-order logic** consisting of Horn clauses. A Horn clause contains at most one positive literal and can be written in Prolog as
+The interpreter operates on a restricted fragment of first-order logic consisting of **Horn clauses** — clauses containing at most one positive literal. In Prolog notation, a Horn clause is written
 
-$$
-H \; \mathbin{:-} \; B_1, B_2, \ldots, B_n.
-$$
+$$H \mathbin{:-} B_1, B_2, \ldots, B_n,$$
 
-where $H$ is the **head** and $B_1,\ldots,B_n$ form the **body**.
+where $H$ is the **head** and $B_1, \ldots, B_n$ form the **body**, representing the logical implication $B_1 \land \cdots \land B_n \Rightarrow H$. A **fact** is a Horn clause with an empty body. The knowledge base is a collection of such clauses from which the interpreter attempts to establish queries via inference.
 
-For example,
-
-```prolog
-grandparent(X, Z) :- parent(X, Y), parent(Y, Z).
-```
-
-represents the logical implication
-
-$$
-parent(X,Y) \land parent(Y,Z)
-\;\Rightarrow\;
-grandparent(X,Z).
-$$
-
-A fact is simply a Horn clause with an empty body:
-
-```prolog
-parent(alice, bob).
-```
-
-The knowledge base therefore defines a collection of logical implications from which the interpreter attempts to establish queries.
+Prolog uses **database semantics** rather than full first-order semantics (Russell & Norvig, 2010). The **unique names assumption** treats every constant and ground term as referring to a distinct object; the **closed world assumption** treats any sentence not entailed by the knowledge base as false. These assumptions make Prolog more efficient and concise than full FOL reasoning, at the cost of expressiveness.
 
 ---
 
 ### Terms
 
-The interpreter represents first-order terms using three fundamental types.
-
-**Variables** represent unknown values:
-
-```prolog
-X
-Y
-```
-
-**Atoms** represent constants:
-
-```prolog
-alice
-bob
-```
-
-**Compound terms** consist of a functor together with zero or more arguments:
-
-```prolog
-parent(alice, bob)
-```
-
-which can be represented as
-
-$$
-parent(alice,bob).
-$$
-
-A compound term is structurally determined by both its functor and its arguments. Consequently,
-
-$$
-parent(alice,bob) \neq parent(alice,charlie).
-$$
-
-This recursive term structure is what allows unification to operate over arbitrary logical expressions.
+First-order terms are represented using three types. **Variables** denote unknown values; **atoms** denote constants; **compound terms** consist of a functor applied to zero or more arguments, written $f(t_1, \ldots, t_n)$. A compound term is structurally determined by both its functor and its argument list, so $parent(alice, bob) \neq parent(alice, charlie)$. This recursive term structure is what allows unification to operate over arbitrary logical expressions.
 
 ---
 
 ### Substitution
 
-A **substitution** is a mapping from variables to terms. For example,
-
-$$
-\theta = \{X \mapsto alice,\;Y \mapsto bob\}.
-$$
-
-Applying $\theta$ to
-
-$$
-parent(X,Y)
-$$
-
-produces
-
-$$
-parent(alice,bob).
-$$
-
-Substitutions may also contain chains of variable bindings. For example,
-
-$$
-\theta = \{X \mapsto Y,\;Y \mapsto bob\}
-$$
-
-requires recursive substitution to obtain
-
-$$
-X\theta = bob.
-$$
-
-The implementation therefore recursively resolves variables when applying substitutions.
+A **substitution** $\theta$ is a finite mapping from variables to terms. Applying $\theta$ to a term replaces each variable with its bound value, resolving chains of variable bindings recursively. For example, the substitution $\theta = \{X \mapsto Y,\; Y \mapsto bob\}$ applied to $X$ yields $bob$ after recursive resolution. The implementation follows this recursive application when constructing and composing substitutions.
 
 ---
 
 ### Unification
 
-**Unification** is the process of finding a substitution that makes two terms syntactically identical. The result is called a **unifier**.
+**Unification** is the process of finding a substitution that makes two terms syntactically identical; the result is called a **unifier**. The *Unify* algorithm (Russell & Norvig, 2010) takes two expressions and a substitution built up so far, and proceeds by structural decomposition: two compound terms unify only when their functors are identical, their argument lists have the same length, and every corresponding pair of arguments unifies recursively. If the functors differ, unification fails immediately.
 
-For example,
+Among all unifiers for a pair of expressions, the interpreter seeks a **Most General Unifier (MGU)** — the substitution that imposes the fewest constraints, leaving variables as unconstrained as possible. The MGU is essential to logic programming because it preserves maximum generality at each inference step, avoiding unnecessary commitments to specific values.
 
-$$
-parent(alice,X)
-$$
-
-and
-
-$$
-parent(alice,bob)
-$$
-
-can be unified using
-
-$$
-\theta = \{X \mapsto bob\}.
-$$
-
-After applying $\theta$ to both terms,
-
-$$
-parent(alice,X)\theta
-=
-parent(alice,bob)
-$$
-
-and therefore the terms are identical.
-
-The implementation recursively decomposes compound terms. Two compound terms can unify only when:
-
-1. Their functors are identical.
-2. They have the same number of arguments.
-3. Every corresponding pair of arguments can be unified.
-
-For example,
-
-$$
-f(X,g(Y))
-$$
-
-and
-
-$$
-f(a,g(b))
-$$
-
-produce
-
-$$
-\theta = \{X \mapsto a,\;Y \mapsto b\}.
-$$
-
-If the functors differ,
-
-$$
-f(X) \quad\text{and}\quad g(X),
-$$
-
-unification fails immediately.
+**Occurs check.** When unifying a variable $X$ with a compound term $t$, a well-formed unifier requires that $X$ does not appear within $t$; otherwise, binding $X \mapsto t$ would produce a circular substitution that expands indefinitely under recursive application. The occurs check rejects such unifications. Russell & Norvig (2010) note that the occurs check makes unification quadratic in the size of the expressions; some Prolog systems omit it for efficiency, at the cost of potential unsound inferences. This implementation retains the occurs check.
 
 ---
 
-### Most General Unifier
+### Standardisation Apart
 
-Among all possible unifiers, the interpreter seeks a **Most General Unifier (MGU)**: a substitution that imposes no more constraints than necessary.
-
-For example,
-
-$$
-parent(alice,X)
-$$
-
-and
-
-$$
-parent(alice,bob)
-$$
-
-have the MGU
-
-$$
-\{X \mapsto bob\}.
-$$
-
-A more specific substitution such as
-
-$$
-\{X \mapsto bob,\;Y \mapsto charlie\}
-$$
-
-would also unify the terms if $Y$ were present elsewhere, but would unnecessarily constrain variables unrelated to the unification problem.
-
-The MGU is essential to logic programming because it allows a single inference step to preserve as much generality as possible.
-
----
-
-### Occurs Check
-
-When unifying a variable with a compound term, the implementation performs an **occurs check** to prevent circular substitutions.
-
-For example,
-
-$$
-X = f(X)
-$$
-
-cannot produce a valid finite substitution. Attempting to bind
-
-$$
-X \mapsto f(X)
-$$
-
-would cause recursive substitution to expand indefinitely.
-
-The occurs check therefore rejects the unification whenever the variable already occurs within the term to which it would be bound.
-
----
-
-### Standardization Apart
-
-Rules are repeatedly reused during inference. Their variables must therefore be renamed each time a rule is considered so that different invocations do not accidentally share variables.
-
-Consider:
-
-```prolog
-parent(X, Y) :- ...
-```
-
-Two applications of this rule are conceptually independent. The interpreter therefore transforms them internally into something analogous to
-
-```text
-parent(X_0, Y_0) :- ...
-parent(X_1, Y_1) :- ...
-```
-
-This process is called **standardization apart**.
-
-Without it, bindings created while solving one branch of the search could incorrectly affect another branch.
-
-The knowledge base maintains a counter to generate fresh variable names whenever rules are retrieved for inference.
+Rules in the knowledge base are reused across many inference steps. Each application of a rule must use a fresh copy of its variables, independent of all previous applications, to prevent bindings established in one branch of the search from propagating incorrectly into another. This renaming process is called **standardisation apart**: before a rule is considered for unification, its variables are renamed using a globally maintained counter to generate unique identifiers. Without it, separate invocations of the same rule would share variable names and produce incorrect inference.
 
 ---
 
 ### Backward Chaining
 
-The interpreter uses **backward chaining** to answer queries.
+The interpreter answers queries via **backward chaining**: rather than deriving all consequences of the knowledge base in advance, it starts from the desired goal and asks what facts or rule bodies would be sufficient to establish it. For a goal $G$ and a rule $H \mathbin{:-} B_1, \ldots, B_k$ whose head unifies with $G$ under substitution $\theta$, the original goal is replaced by the instantiated body $B_1\theta, \ldots, B_k\theta$, and the solver recurses. The base case occurs when the goal list is empty, at which point the accumulated substitution constitutes a solution.
 
-Rather than deriving every consequence of the knowledge base in advance, backward chaining starts with a desired goal and asks what would be sufficient to prove it.
-
-For the query
-
-```prolog
-grandparent(alice, X).
-```
-
-and the rule
-
-```prolog
-grandparent(A, C) :- parent(A, B), parent(B, C).
-```
-
-the solver first unifies the query with the rule head:
-
-$$
-grandparent(alice,X)
-$$
-
-with
-
-$$
-grandparent(A,C).
-$$
-
-This produces bindings equivalent to
-
-$$
-A \mapsto alice,\qquad C \mapsto X.
-$$
-
-The original goal is then replaced by the rule body:
-
-```prolog
-parent(alice, B), parent(B, X).
-```
-
-The solver recursively attempts to establish these new goals.
-
-Thus inference proceeds from the desired conclusion toward the facts required to establish it.
+This corresponds to **SLD-resolution** (Selective Linear Definite clause resolution) over the Horn-clause knowledge base. Generalized Modus Ponens — the lifted inference rule underlying backward chaining — is sound: every derivation it produces is a logical consequence of the knowledge base (Russell & Norvig, 2010).
 
 ---
 
 ### Depth-First Search and Backtracking
 
-When multiple rules or facts can satisfy a goal, the interpreter explores them using **depth-first search**.
+When multiple rules or facts can unify with a goal, the interpreter explores them via **depth-first search**, trying each candidate in the order it appears in the knowledge base. Upon finding a successful branch, the solver returns its substitution; when the user requests an additional solution, the interpreter backtracks to the most recent unresolved choice point and continues. If a branch fails entirely, the solver backtracks and tries the next candidate.
 
-Suppose the knowledge base contains:
-
-```prolog
-parent(alice, bob).
-parent(alice, diana).
-```
-
-The query
+The ordering of clauses in the knowledge base therefore has a significant effect on search behaviour. A poorly ordered recursive rule can produce an infinite search path before a finite solution is found. For example, placing a recursive clause before a base case in a rule such as
 
 ```prolog
-parent(alice, X).
+path(X, Z) :- path(X, Y), link(Y, Z).
+path(X, Z) :- link(X, Z).
 ```
 
-has two solutions:
-
-$$
-X = bob
-$$
-
-and
-
-$$
-X = diana.
-$$
-
-The solver explores one successful branch, returns its substitution, and then backtracks to the previous choice point when the user requests another solution.
-
-This gives the inference process the structure of a depth-first search tree:
-
-```text
-                 parent(alice, X)
-                  /            \
-             X = bob        X = diana
-```
-
-If a branch eventually fails, the solver backtracks to the most recent unresolved choice and continues searching.
+causes the interpreter to follow an infinite left-recursive branch, never reaching the base case — even when a finite proof exists. Prolog's depth-first strategy makes it incomplete in this sense: it may fail to find proofs that exist, depending on rule ordering and goal structure (Russell & Norvig, 2010). Reordering the clauses to place the base case first recovers termination for this class of problem.
 
 ---
 
-### Inference Procedure
+### Redundant Inference and Memoisation
 
-For a list of goals
+Depth-first backward chaining can perform substantial redundant computation by re-deriving the same subgoals across different branches of the search tree. For graph reachability problems, for instance, Prolog may perform exponentially many inferences where forward chaining would require at most $n^2$ — one for each pair of nodes (Russell & Norvig, 2010). This is analogous to the repeated-state problem in uninformed search.
 
-$$
-G_1,G_2,\ldots,G_n,
-$$
-
-the solver selects the first goal $G_1$ and considers each standardized rule whose head can unify with it.
-
-For a compatible rule
-
-$$
-H \mathbin{:-} B_1,\ldots,B_k,
-$$
-
-the solver computes a unifier
-
-$$
-\theta = MGU(G_1,H)
-$$
-
-and replaces the current goal with
-
-$$
-B_1,\ldots,B_k,G_2,\ldots,G_n.
-$$
-
-The substitution is propagated through the resulting goals, and the process continues recursively.
-
-The base case occurs when no goals remain:
-
-$$
-[].
-$$
-
-At that point, every goal in the branch has been established and the accumulated substitution represents a successful solution.
-
-If no rule can unify with the selected goal, that branch fails and the solver backtracks.
+The standard remedy is **memoisation**: caching solutions to subgoals as they are found and reusing them when the same subgoal recurs, rather than repeating the derivation. This approach is taken by tabled logic programming systems, which combine the goal-directedness of backward chaining with the dynamic-programming efficiency of forward chaining. This interpreter does not implement tabling, and is therefore subject to redundant inference on recursive knowledge bases.
 
 ---
 
 ### Soundness and Completeness
 
-For the restricted Horn-clause language implemented here, the inference procedure follows the standard semantics of SLD-style resolution.
+**Soundness.** Every successful derivation corresponds to a logical consequence of the Horn-clause knowledge base, since each inference step is an application of Generalized Modus Ponens, which is sound.
 
-**Soundness.** A successful derivation corresponds to a logical consequence of the Horn-clause knowledge base. The solver therefore does not intentionally produce bindings that cannot be justified by the supplied facts and rules.
-
-**Completeness.** Given a finite search space, depth-first backward chaining can find every logically derivable solution provided that the search eventually explores the corresponding branches. In practice, unrestricted recursive rules can produce infinite branches, so termination is not guaranteed.
-
-For example, a recursive rule such as
-
-```prolog
-ancestor(X, Y) :- ancestor(X, Z), parent(Z, Y).
-```
-
-can create an infinite search path depending on the ordering of rules and goals. Thus logical completeness does not imply that every query terminates under depth-first evaluation.
+**Completeness.** Given a finite search space and terminating derivations, depth-first backward chaining finds every logically derivable solution. In practice, unrestricted recursive rules can produce infinite branches under depth-first evaluation, so termination is not guaranteed and logical completeness does not imply that every query terminates.
 
 ---
 
-## Example Knowledge Base
+## Limitations
 
-A simple family relationship knowledge base can be written as:
+This project implements a minimal subset of Prolog sufficient to demonstrate the core inference mechanisms. The following features are intentionally omitted:
+
+- Negation as failure
+- Cut (`!`)
+- Arithmetic predicates and built-in functions
+- List notation (`[H|T]`)
+- Modules and operator declarations
+- Tabling and memoisation
+- Clause indexing and the Warren Abstract Machine
+
+---
+
+## Example
+
+A simple family knowledge base:
 
 ```prolog
 parent(alice, bob).
@@ -441,156 +126,25 @@ parent(alice, diana).
 grandparent(X, Z) :- parent(X, Y), parent(Y, Z).
 ```
 
-The query
-
-```prolog
-?- parent(alice, X).
-```
-
-produces:
-
-```text
-X = bob ; X = diana.
-```
-
-The query
+Query:
 
 ```prolog
 ?- grandparent(alice, X).
-```
-
-requires two inference steps:
-
-```text
-grandparent(alice, X)
-        ↓
-parent(alice, Y), parent(Y, X)
-        ↓
-parent(bob, X)
-        ↓
-X = charlie
-```
-
-and therefore produces:
-
-```text
 X = charlie.
 ```
 
-A query for an unsupported fact fails:
-
-```text
-?- parent(charlie, X).
-false.
-```
+The derivation proceeds as follows: `grandparent(alice, X)` unifies with the rule head under $\{A \mapsto alice,\; C \mapsto X\}$, replacing the goal with `parent(alice, Y), parent(Y, X)`. The first conjunct unifies with `parent(alice, bob)`, binding $Y \mapsto bob$, leaving `parent(bob, X)`. This unifies with `parent(bob, charlie)`, binding $X \mapsto charlie$ and closing the proof.
 
 ---
 
-## Complexity
-
-The computational behaviour of backward chaining is closely related to the size of the resulting search tree.
-
-Let:
-
-* $b$ be the number of applicable rules at a typical goal,
-* $d$ be the maximum depth of a derivation.
-
-In the worst case, depth-first search may explore
-
-$$
-O(b^d)
-$$
-
-branches before finding a solution or establishing failure.
-
-Unlike breadth-first search, depth-first inference requires memory proportional primarily to the current derivation depth rather than the entire search frontier. Ignoring the size of substitutions and terms, the recursive search therefore requires approximately
-
-$$
-O(d)
-$$
-
-search-stack space.
-
-However, substitutions and the logical terms generated along a branch also consume memory, and repeated rule applications can create increasingly large terms.
-
-The practical performance of Prolog-style inference therefore depends heavily on:
-
-* rule ordering,
-* goal ordering,
-* branching factor,
-* recursion structure,
-* depth of derivations,
-* and the effectiveness of unification.
-
-A poor ordering can cause the solver to explore a large or even infinite branch before reaching a successful alternative.
-
----
-
-## Limitations
-
-This project intentionally implements only a small subset of Prolog. It currently does not support:
-
-* Negation as failure
-* Cut (`!`)
-* Arithmetic predicates
-* Lists and list notation (`[H|T]`)
-* Built-in predicates
-* The full Prolog operator system
-* Modules
-* Constraint logic programming
-* Tabling or memoization
-* Search heuristics or clause indexing
-
-The purpose is to expose the fundamental inference mechanisms rather than reproduce the complete Prolog language.
-
----
-
-## Running the Interpreter
-
-Run the interpreter with a Prolog knowledge base:
+## Reproduction
 
 ```bash
-python main.py knowledge.pl
-```
-
-The knowledge base is loaded and an interactive REPL is started.
-
-A query can then be entered in Prolog syntax:
-
-```text
-?- parent(alice, X).
-X = bob ; X = diana.
-```
-
-The interpreter can also be started without a knowledge-base file:
-
-```bash
-python main.py
+python main.py family.pl
 ```
 
 ---
 
-## Concepts Demonstrated
-
-This project provides an implementation-level demonstration of:
-
-* First-order logic
-* Horn clauses
-* Terms and predicates
-* Substitutions
-* Unification
-* Most General Unifiers
-* Occurs checking
-* Standardization apart
-* Backward chaining
-* SLD-style resolution
-* Depth-first search
-* Backtracking
-* Knowledge representation
-* Logic-programming query evaluation
-
----
-
-## Reference
+## References
 
 Russell, S., & Norvig, P. (2010). *Artificial Intelligence: A Modern Approach* (3rd ed.). Prentice Hall. Chapter 9, *Inference in First-Order Logic*.
