@@ -63,7 +63,9 @@ Rules in the knowledge base are reused across many inference steps. Each applica
 
 ### Backward Chaining
 
-The interpreter answers queries via **backward chaining**: rather than deriving all consequences of the knowledge base in advance, it starts from the desired goal and asks what facts or rule bodies would be sufficient to establish it. For a goal $G$ and a rule $H \mathbin{:-} B_1, \ldots, B_k$ whose head unifies with $G$ under substitution $\theta$, the original goal is replaced by the instantiated body $B_1\theta, \ldots, B_k\theta$, and the solver recurses. The base case occurs when the goal list is empty, at which point the accumulated substitution constitutes a solution.
+The interpreter answers queries via **backward chaining**: rather than deriving all consequences of the knowledge base in advance, it starts from the desired goal and asks what facts or rule bodies would be sufficient to establish it. Backward chaining is a kind of AND/OR search — the OR part because any rule in the knowledge base whose head unifies with the current goal may be used to prove it, and the AND part because every conjunct in the body of the selected rule must be proved in turn (Russell & Norvig, 2010).
+
+The implementation follows the FOL-BC-Ask structure. For a goal $G$, *FOL-BC-Or* fetches all clauses whose right-hand side might unify with $G$, standardises their variables apart, and for each clause whose head does unify with $G$ under substitution $\theta$, passes the instantiated body to *FOL-BC-And*. *FOL-BC-And* proves each conjunct in sequence, threading the accumulated substitution forward through the conjunction. When the goal list is empty, the accumulated substitution constitutes a solution and is yielded; the solver backtracks and continues to yield further solutions on demand.
 
 This corresponds to **SLD-resolution** (Selective Linear Definite clause resolution) over the Horn-clause knowledge base. Generalized Modus Ponens — the lifted inference rule underlying backward chaining — is sound: every derivation it produces is a logical consequence of the knowledge base (Russell & Norvig, 2010).
 
@@ -81,6 +83,18 @@ path(X, Z) :- link(X, Z).
 ```
 
 causes the interpreter to follow an infinite left-recursive branch, never reaching the base case — even when a finite proof exists. Prolog's depth-first strategy makes it incomplete in this sense: it may fail to find proofs that exist, depending on rule ordering and goal structure (Russell & Norvig, 2010). Reordering the clauses to place the base case first recovers termination for this class of problem.
+
+---
+
+### Implementation Notes: Choice Points and the Trail
+
+A naive implementation of backward chaining manages the iteration over candidate rules explicitly, constructing and threading substitution objects at each step. Production Prolog interpreters use two complementary data structures to make this more efficient (Russell & Norvig, 2010).
+
+Rather than iterating over possible results from each subfunction, Prolog maintains a global stack of **choice points** corresponding to the branching points in *FOL-BC-Or* — the alternative clauses that have not yet been tried. This global stack is more efficient than recursive generator management and simplifies debugging, since a debugger can traverse it directly.
+
+Rather than constructing explicit substitution objects, Prolog uses **logic variables** that remember their current binding directly. At any point during inference, every variable is either unbound or bound to a term; together, these bindings implicitly define the substitution for the current proof branch. When a branch fails and the interpreter backtracks to a choice point, variables bound along the failed path must be unbound. This is managed via the **trail**: each time a variable is bound by unification, it is pushed onto the trail stack. On backtracking, variables are unbound in reverse order as they are popped from the trail, restoring the state at the previous choice point.
+
+This interpreter follows the simpler explicit-substitution model of FOL-BC-Ask rather than the trail-based implementation, which is appropriate for a transparent educational realisation of the algorithm.
 
 ---
 
